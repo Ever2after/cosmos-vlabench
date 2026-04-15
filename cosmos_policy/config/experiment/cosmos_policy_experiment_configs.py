@@ -25,6 +25,7 @@ from cosmos_policy._src.imaginaire.utils.checkpoint_db import get_checkpoint_pat
 from cosmos_policy.datasets.aloha_dataset import ALOHADataset
 from cosmos_policy.datasets.libero_dataset import LIBERODataset
 from cosmos_policy.datasets.robocasa_dataset import RoboCasaDataset
+from cosmos_policy.datasets.vlabench_dataset import VLABenchDataset
 from cosmos_policy.models.policy_video2world_model import CosmosPolicyVideo2WorldModel
 from cosmos_policy.modules.hybrid_edm_sde import HybridEDMSDE
 
@@ -462,6 +463,101 @@ cosmos_predict2_2b_480p_aloha_185_demos_4_tasks_mixture_foldshirt15_candiesinbow
 )
 
 
+# *** VLABench: Simulation environment with robotic manipulation primitives ***
+vlabench_primitives_dataset = L(VLABenchDataset)(
+    data_dir=os.path.join(BASE_DATASETS_DIR),
+    t5_text_embeddings_path=os.path.join(
+        BASE_DATASETS_DIR, "t5_embeddings.pkl"
+    ),
+    chunk_size=8,
+    use_image_aug=True,
+    use_proprio=True,
+    normalize_proprio=True,
+    normalize_actions=True,
+    num_duplicates_per_image=4,  # WAN 2.1 tokenizer: 4 images per latent frame
+    use_stronger_image_aug=False,
+    demonstration_sampling_prob=1.0,  # Use demonstrations only (no rollouts)
+    success_rollout_sampling_prob=0.5,
+    return_value_function_returns=False,
+    gamma=0.99,
+    is_train=True,
+    train_val_split=1.0,
+)
+cosmos_predict2_2b_480p_vlabench_primitives = LazyDict(
+    dict(
+        defaults=[
+            "/experiment/cosmos_predict2_2b_480p_libero",
+            "_self_",
+        ],
+        checkpoint=dict(
+            save_iter=100,
+        ),
+        model=L(CosmosPolicyVideo2WorldModel)(
+            config=dict(
+                state_t=9,  # Latent temporal dim (blank, proprio, wrist, primary, action, future proprio, future wrist, future primary, value)
+                min_num_conditional_frames=4,  # 1 blank, 3 conditioning (proprio, wrist, primary)
+                max_num_conditional_frames=4,  # 1 blank, 3 conditioning (proprio, wrist, primary)
+                sigma_conditional=0.0,  # No noise on conditional latents
+                conditioning_strategy="frame_replace",
+                denoise_replace_gt_frames=True,
+                tokenizer=dict(
+                    chunk_duration=33,  # 1 blank + 32 images (4 proprio, 4 wrist, 4 primary, 4 action, 4 future_proprio, 4 future_wrist, 4 future_primary, 4 value)
+                ),
+            ),
+        ),
+        scheduler=dict(
+            # LR decay for 20K steps in cycle #1, then decay by 5x and stay constant forever in cycle #2
+            cycle_lengths=[20000, 100000000000000],
+            warm_up_steps=[2000, 0],
+            f_start=[1e-6, 0.06],
+            f_max=[1.0, 0.06],
+            f_min=[0.3, 0.06],
+        ),
+        dataloader_train=L(DataLoader)(
+            num_workers=8,
+            persistent_workers=True,
+            pin_memory=True,
+            dataset=vlabench_primitives_dataset,
+            sampler=L(DistributedSampler)(
+                dataset=vlabench_primitives_dataset,
+                num_replicas=L(parallel_state.get_data_parallel_world_size)(),
+                rank=L(parallel_state.get_data_parallel_rank)(),
+                shuffle=True,
+                seed=0,
+            ),
+            batch_size=20,
+            drop_last=True,
+        ),
+        job=dict(
+            local_root="/mnt/nas/jusang/cosmos-checkpoints3",
+            group="cosmos_v2_finetune",
+            name="cosmos_predict2_2b_480p_vlabench_primitives",
+        ),
+    )
+)
+# Inference version
+cosmos_predict2_2b_480p_vlabench_primitives__inference_only = LazyDict(
+    dict(
+        defaults=[
+            "/experiment/cosmos_predict2_2b_480p_vlabench_primitives",
+            "_self_",
+        ],
+        model=L(CosmosPolicyVideo2WorldModel)(
+            config=dict(
+                sde=L(HybridEDMSDE)(
+                    sigma_max=80,
+                    sigma_min=4,
+                )
+            )
+        ),
+        job=dict(
+            group="cosmos_v2_inference",
+            name="cosmos_predict2_2b_480p_vlabench_primitives__inference_only",
+        ),
+    )
+)
+
+
 def register_configs():
     cs = ConfigStore.instance()
     # Register the experiments
@@ -477,6 +573,9 @@ def register_configs():
         cosmos_predict2_2b_480p_aloha_185_demos_4_tasks_mixture_foldshirt15_candiesinbowl45_candyinbag45_eggplantchickenonplate80__inference_only,
         cosmos_predict2_2b_480p_aloha_185_demos_4_tasks_mixture_foldshirt15_candiesinbowl45_candyinbag45_eggplantchickenonplate80__resumeFrom50K_648_rollouts_Vsprime_value_func,  # ALOHA planning model
         cosmos_predict2_2b_480p_aloha_185_demos_4_tasks_mixture_foldshirt15_candiesinbowl45_candyinbag45_eggplantchickenonplate80__resumeFrom50K_648_rollouts_Vsprime_value_func__inference_only,
+        # VLABench
+        cosmos_predict2_2b_480p_vlabench_primitives,
+        cosmos_predict2_2b_480p_vlabench_primitives__inference_only,
     ]:
         experiment_name = _item["job"]["name"]
         log.info(f"Registering experiment: {experiment_name}")

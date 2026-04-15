@@ -211,7 +211,10 @@ def load_model_state_dict_from_checkpoint(
         else:
             cur_key_ckpt_full_path = os.path.join(s3_checkpoint_dir, "model")
     else:
-        cur_key_ckpt_full_path = s3_checkpoint_dir
+        if checkpoint_format == "dcp" and not s3_checkpoint_dir.rstrip("/").endswith("/model"):
+            cur_key_ckpt_full_path = os.path.join(s3_checkpoint_dir, "model")
+        else:
+            cur_key_ckpt_full_path = s3_checkpoint_dir
 
     from cosmos_policy._src.imaginaire.utils.checkpoint_db import get_checkpoint_path
 
@@ -222,68 +225,79 @@ def load_model_state_dict_from_checkpoint(
         return model
 
     if load_from_local:
-        # Load on rank0 only and broadcast
-        if distributed.is_rank0():
-            log.info(f"Loading model cached locally from {local_s3_ckpt_fp}")
-            local_state_dict = easy_io.load(local_s3_ckpt_fp, weights_only=INTERNAL)
+        if checkpoint_format == "dcp" and os.path.isdir(local_s3_ckpt_fp):
+            log.info(f"Loading model cached locally from DCP checkpoint {local_s3_ckpt_fp}")
+            checkpointer = DistributedCheckpointer(config.checkpoint, config.job, callbacks=None, disable_async=True)
 
-            # Handle LoRA key mapping if the model uses LoRA and checkpoint is in .pt format
-            if (
-                hasattr(model, "config")
-                and hasattr(model.config, "use_lora")
-                and model.config.use_lora
-                and checkpoint_format == "pt"
-            ):
-                log.info("Model uses LoRA, mapping checkpoint keys to model keys with base_layer...")
-                mapped_state_dict = {}
-                mapped_keys = []
-                missing_keys = []
+            _model_wrapper = ModelWrapper(model, load_ema_to_reg=load_ema_to_reg)
+            _state_dict = _model_wrapper.state_dict()
+            storage_reader = checkpointer.get_storage_reader(local_s3_ckpt_fp)
+            load_planner = DefaultLoadPlanner(allow_partial_load=True)
+            dcp_load_state_dict(_state_dict, storage_reader, load_planner)
+            _model_wrapper.load_state_dict(_state_dict)
+        else:
+            # Load on rank0 only and broadcast
+            if distributed.is_rank0():
+                log.info(f"Loading model cached locally from {local_s3_ckpt_fp}")
+                local_state_dict = easy_io.load(local_s3_ckpt_fp, weights_only=INTERNAL)
 
-                # Get current model state dict to understand what keys are expected
-                model_state_dict = model.state_dict()
+                # Handle LoRA key mapping if the model uses LoRA and checkpoint is in .pt format
+                if (
+                    hasattr(model, "config")
+                    and hasattr(model.config, "use_lora")
+                    and model.config.use_lora
+                    and checkpoint_format == "pt"
+                ):
+                    log.info("Model uses LoRA, mapping checkpoint keys to model keys with base_layer...")
+                    mapped_state_dict = {}
+                    mapped_keys = []
+                    missing_keys = []
 
-                for model_key in model_state_dict.keys():
-                    if "base_layer." in model_key or "base_model.model." in model_key:
-                        # This is a LoRA layer - map from checkpoint key (without base_layer)
-                        checkpoint_key = model_key.replace("base_layer.", "").replace("base_model.model.", "")
-                        if checkpoint_key in local_state_dict:
-                            mapped_state_dict[model_key] = local_state_dict[checkpoint_key]
-                            mapped_keys.append(f"{checkpoint_key} -> {model_key}")
+                    # Get current model state dict to understand what keys are expected
+                    model_state_dict = model.state_dict()
+
+                    for model_key in model_state_dict.keys():
+                        if "base_layer." in model_key or "base_model.model." in model_key:
+                            # This is a LoRA layer - map from checkpoint key (without base_layer)
+                            checkpoint_key = model_key.replace("base_layer.", "").replace("base_model.model.", "")
+                            if checkpoint_key in local_state_dict:
+                                mapped_state_dict[model_key] = local_state_dict[checkpoint_key]
+                                mapped_keys.append(f"{checkpoint_key} -> {model_key}")
+                            else:
+                                missing_keys.append(model_key)
+                        elif model_key in local_state_dict:
+                            # Direct mapping for non-LoRA keys
+                            mapped_state_dict[model_key] = local_state_dict[model_key]
                         else:
                             missing_keys.append(model_key)
-                    elif model_key in local_state_dict:
-                        # Direct mapping for non-LoRA keys
-                        mapped_state_dict[model_key] = local_state_dict[model_key]
-                    else:
-                        missing_keys.append(model_key)
 
-                if mapped_keys:
-                    log.info(f"Mapped {len(mapped_keys)} LoRA keys from checkpoint to model (showing first 5):")
-                    for mapped_key in mapped_keys[:5]:
-                        log.info(f"  {mapped_key}")
-                if missing_keys:
-                    log.warning(f"Missing keys in checkpoint: {missing_keys[:10]}... (showing first 10)")
+                    if mapped_keys:
+                        log.info(f"Mapped {len(mapped_keys)} LoRA keys from checkpoint to model (showing first 5):")
+                        for mapped_key in mapped_keys[:5]:
+                            log.info(f"  {mapped_key}")
+                    if missing_keys:
+                        log.warning(f"Missing keys in checkpoint: {missing_keys[:10]}... (showing first 10)")
 
-                local_state_dict = mapped_state_dict
+                    local_state_dict = mapped_state_dict
 
-            # `strict=False` is needed to avoid errors: `Skipping key ... introduced by TransformerEngine for FP8 in the checkpoint.`
-            model.load_state_dict(local_state_dict, strict=False)
+                # `strict=False` is needed to avoid errors: `Skipping key ... introduced by TransformerEngine for FP8 in the checkpoint.`
+                model.load_state_dict(local_state_dict, strict=False)
 
-        # Synchronize model states from rank 0 to all other ranks
-        # Skip EMA parameters and buffers to avoid OOM - they are on CPU now, and will be moved to CUDA and synced via copy from main model after FSDP
-        params_and_buffers_to_ignore = set()
-        if hasattr(model, "net_ema") and model.net_ema is not None:
-            # Add all parameters
-            for param_name, _ in model.net_ema.named_parameters():
-                params_and_buffers_to_ignore.add(f"net_ema.{param_name}")
-            # Add all buffers (e.g., running_mean, running_var in BatchNorm)
-            for buffer_name, _ in model.net_ema.named_buffers():
-                params_and_buffers_to_ignore.add(f"net_ema.{buffer_name}")
-            log.info(
-                f"Skipping sync for {len(params_and_buffers_to_ignore)} EMA parameters and buffers to avoid OOM during initialization"
-            )
+            # Synchronize model states from rank 0 to all other ranks
+            # Skip EMA parameters and buffers to avoid OOM - they are on CPU now, and will be moved to CUDA and synced via copy from main model after FSDP
+            params_and_buffers_to_ignore = set()
+            if hasattr(model, "net_ema") and model.net_ema is not None:
+                # Add all parameters
+                for param_name, _ in model.net_ema.named_parameters():
+                    params_and_buffers_to_ignore.add(f"net_ema.{param_name}")
+                # Add all buffers (e.g., running_mean, running_var in BatchNorm)
+                for buffer_name, _ in model.net_ema.named_buffers():
+                    params_and_buffers_to_ignore.add(f"net_ema.{buffer_name}")
+                log.info(
+                    f"Skipping sync for {len(params_and_buffers_to_ignore)} EMA parameters and buffers to avoid OOM during initialization"
+                )
 
-        distributed.sync_model_states(model, src=0, params_and_buffers_to_ignore=params_and_buffers_to_ignore)
+            distributed.sync_model_states(model, src=0, params_and_buffers_to_ignore=params_and_buffers_to_ignore)
     else:
         log.info(f"Loading model from s3 {s3_checkpoint_dir}")
 

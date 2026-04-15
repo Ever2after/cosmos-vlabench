@@ -189,6 +189,8 @@ class JobConfig:
     group: str = ""
     # Run/job name.
     name: str = ""
+    # Optional local output root. If unset, IMAGINAIRE_OUTPUT_ROOT is used.
+    local_root: str = ""
     # W&B mode, can be "online", or "disabled".
     wandb_mode: str = "online"
     # Cluster configuration (optional, for cluster-specific settings).
@@ -200,7 +202,7 @@ class JobConfig:
 
     @property
     def path_local(self) -> str:
-        local_root = os.environ.get("IMAGINAIRE_OUTPUT_ROOT", "/tmp/imaginaire4-output")
+        local_root = self.local_root or os.environ.get("IMAGINAIRE_OUTPUT_ROOT", "/tmp/imaginaire4-output")
         return f"{local_root}/{self.path}"
 
 

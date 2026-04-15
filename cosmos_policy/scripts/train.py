@@ -116,7 +116,11 @@ if __name__ == "__main__":
 
     # Get the config file from the input arguments.
     parser = argparse.ArgumentParser(description="Training")
-    parser.add_argument("--config", help="Path to the config file", required=False)
+    parser.add_argument(
+        "--config", 
+        help="Path to the config file",
+        default="cosmos_policy/config/config.py", 
+        required=False)
     parser.add_argument(
         "opts",
         help="""

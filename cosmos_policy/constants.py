@@ -43,6 +43,12 @@ ALOHA_CONSTANTS = {
     "PROPRIO_DIM": 14,
 }
 
+VLABENCH_CONSTANTS = {
+    "NUM_ACTIONS_CHUNK": 8,
+    "ACTION_DIM": 8,
+    "PROPRIO_DIM": 8,
+}
+
 
 # Function to detect robot platform from command line arguments
 def detect_robot_platform():
@@ -54,6 +60,8 @@ def detect_robot_platform():
         return "ROBOCASA"
     elif "aloha" in cmd_args:
         return "ALOHA"
+    elif "vlabench" in cmd_args:
+        return "VLABENCH"
     else:
         # Default to LIBERO if unclear
         return "LIBERO"
@@ -69,6 +77,10 @@ elif ROBOT_PLATFORM == "ROBOCASA":
     constants = ROBOCASA_CONSTANTS
 elif ROBOT_PLATFORM == "ALOHA":
     constants = ALOHA_CONSTANTS
+elif ROBOT_PLATFORM == "VLABENCH":
+    constants = VLABENCH_CONSTANTS
+else:
+    raise ValueError(f"Unsupported robot platform: {ROBOT_PLATFORM}")
 
 # Assign constants to global variables
 NUM_ACTIONS_CHUNK = constants["NUM_ACTIONS_CHUNK"]

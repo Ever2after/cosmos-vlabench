@@ -232,14 +232,16 @@ def resolve_path(path: str, cache_dir: str | None = None) -> str:
 
 def load_dataset_stats(dataset_stats_path: str) -> dict:
     """
-    Load dataset statistics from a JSON file.
+    Load dataset statistics from a JSON or pickle file.
 
     This function loads normalization statistics needed for action un-normalization
     and proprio rescaling. It handles both local paths and HuggingFace paths.
+    When a requested local file does not exist, it also tries a small set of
+    common fallback filenames used by dataset loaders.
 
     Args:
-        dataset_stats_path (str): Path to dataset statistics JSON file.
-                                  Can be a local path or HF path (e.g., "nvidia/Cosmos-Policy-LIBERO-Predict2-2B/libero_dataset_statistics.json")
+        dataset_stats_path (str): Path to dataset statistics file.
+                      Can be a local path or HF path (e.g., "nvidia/Cosmos-Policy-LIBERO-Predict2-2B/libero_dataset_statistics.json")
 
     Returns:
         dict: Dataset statistics with numpy arrays for keys like "actions_min", "actions_max", "proprio_min", "proprio_max"
@@ -249,10 +251,57 @@ def load_dataset_stats(dataset_stats_path: str) -> dict:
     """
     assert dataset_stats_path != "", "Must provide `dataset_stats_path` for action un-normalization!"
     dataset_stats_path = resolve_path(dataset_stats_path)
-    assert os.path.exists(dataset_stats_path), f"Dataset stats do not exist at path: {dataset_stats_path}"
 
-    with open(dataset_stats_path, "r") as f:
-        dataset_stats = json.load(f)
+    candidate_paths = [dataset_stats_path]
+    if not os.path.exists(dataset_stats_path):
+        parent_dir = os.path.dirname(dataset_stats_path)
+        requested_name = os.path.basename(dataset_stats_path)
+        requested_stem, requested_ext = os.path.splitext(requested_name)
+
+        fallback_names = []
+        if requested_ext == ".json":
+            fallback_names.extend(
+                [
+                    f"{requested_stem}.pkl",
+                    "dataset_statistics.json",
+                    "vlabench_dataset_statistics.pkl",
+                ]
+            )
+        elif requested_ext == ".pkl":
+            fallback_names.extend(
+                [
+                    f"{requested_stem}.json",
+                    "dataset_statistics.json",
+                ]
+            )
+        else:
+            fallback_names.extend(
+                [
+                    f"{requested_name}.json",
+                    f"{requested_name}.pkl",
+                    "dataset_statistics.json",
+                    "vlabench_dataset_statistics.pkl",
+                ]
+            )
+
+        for fallback_name in fallback_names:
+            fallback_path = os.path.join(parent_dir, fallback_name)
+            if fallback_path not in candidate_paths:
+                candidate_paths.append(fallback_path)
+
+        existing_candidate = next((path for path in candidate_paths if os.path.exists(path)), None)
+        assert existing_candidate is not None, (
+            f"Dataset stats do not exist at path: {dataset_stats_path}. "
+            f"Checked: {candidate_paths}"
+        )
+        dataset_stats_path = existing_candidate
+
+    if dataset_stats_path.endswith(".pkl"):
+        with open(dataset_stats_path, "rb") as f:
+            dataset_stats = pickle.load(f)
+    else:
+        with open(dataset_stats_path, "r") as f:
+            dataset_stats = json.load(f)
 
     # Convert JSON lists back to numpy arrays
     for stat_name, stat_value in dataset_stats.items():
@@ -897,7 +946,7 @@ def get_action(
         #  - RoboCasa: 1 wrist image, 1 primary (third-person) image, 1 secondary (third-person) image
         #  - ALOHA: 2 wrist images, 1 primary (third-person) image
         IMAGE_IDX, IMAGE2_IDX, WRIST_IMAGE_IDX, WRIST_IMAGE2_IDX = -1, -1, -1, -1
-        if cfg.suite == "libero":
+        if cfg.suite in {"libero", "vlabench"}:
             all_camera_images = [
                 obs["wrist_image"],
                 obs["primary_image"],
@@ -1141,7 +1190,7 @@ def get_action(
         # extract future state and value predictions from the generated sample now
         if generate_future_state_and_value_in_parallel:
             # Get indices in the generated sample to replace with the original (pre-injection) latent frames so that VAE decoding produces correct images
-            if cfg.suite == "libero":
+            if cfg.suite in {"libero", "vlabench"}:
                 INDICES_TO_REPLACE = [
                     0,
                     1,
@@ -1288,7 +1337,7 @@ def get_future_state_prediction(
 
     with torch.inference_mode():
         # Get indices in the generated sample to replace with the original (pre-injection) latent frames so that VAE decoding produces correct images
-        if cfg.suite == "libero":
+        if cfg.suite in {"libero", "vlabench"}:
             INDICES_TO_REPLACE = [
                 0,
                 1,

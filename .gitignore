@@ -1,2 +1,5 @@
 /.cuda-name
 /build
+*__pycache__/
+outputs/
+*.log

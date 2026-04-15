@@ -183,6 +183,18 @@ CURR_STATE_START_LATENT_IDX, CURR_STATE_END_LATENT_IDX = 1, 4
 FUTURE_STATE_START_LATENT_IDX, FUTURE_STATE_END_LATENT_IDX = 6, 9
 
 
+def _to_json_compatible(value: Any) -> Any:
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, dict):
+        return {key: _to_json_compatible(val) for key, val in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_to_json_compatible(item) for item in value]
+    return value
+
+
 @dataclass
 class DeployConfig:
     # fmt: off
@@ -329,10 +341,19 @@ class PolicyServer:
             task_description = observation["task_description"]
 
             # Convert lists to numpy arrays
-            observation["primary_image"] = np.array(observation["primary_image"], dtype=np.uint8)
-            observation["left_wrist_image"] = np.array(observation["left_wrist_image"], dtype=np.uint8)
-            observation["right_wrist_image"] = np.array(observation["right_wrist_image"], dtype=np.uint8)
-            observation["proprio"] = np.array(observation["proprio"], dtype=np.float32)
+            image_keys = [
+                "primary_image",
+                "secondary_image",
+                "wrist_image",
+                "left_wrist_image",
+                "right_wrist_image",
+            ]
+            for image_key in image_keys:
+                if image_key in observation:
+                    observation[image_key] = np.array(observation[image_key], dtype=np.uint8)
+
+            if "proprio" in observation:
+                observation["proprio"] = np.array(observation["proprio"], dtype=np.float32)
 
             # Record metadata
             return_all_query_results = False
@@ -690,6 +711,8 @@ class PolicyServer:
                     future_image_predictions=best_future_predictions,
                     value_prediction=best_value_predictions,
                 )
+
+            response = _to_json_compatible(response)
 
             if double_encode:
                 return JSONResponse(json_numpy.dumps(response))

@@ -14,6 +14,7 @@
 # limitations under the License.
 
 import abc
+import functools
 import importlib
 import json
 import os
@@ -87,11 +88,27 @@ def is_attrs(x: Any) -> bool:
 
 
 def to_qualitified_name(x: Any) -> str:
+    # functools.partial objects do not have __qualname__.
+    if isinstance(x, functools.partial):
+        return f"functools.partial({to_qualitified_name(x.func)})"
+
     result = ""
-    if x.__module__:
-        result += x.__module__ + "."
-    result += x.__qualname__
-    return result
+    module = getattr(x, "__module__", None)
+    qualname = getattr(x, "__qualname__", None)
+
+    if module:
+        result += module + "."
+    if qualname:
+        result += qualname
+        return result
+
+    # Fallback for callable instances/classes that don't expose __qualname__.
+    name = getattr(x, "__name__", None)
+    if name:
+        result += name
+        return result
+
+    return result + x.__class__.__name__
 
 
 def is_optional(x: type) -> bool:
