@@ -38,6 +38,25 @@ val_sampling_size_override = dict(
 BASE_DATASETS_DIR = os.environ.get("BASE_DATASETS_DIR", ".")
 
 
+def resolve_checkpoint_path_or_empty(checkpoint_uri: str, env_key: str | None = None) -> str:
+    """Resolve checkpoint URI to a local path, with safe fallback for gated/offline environments.
+
+    If `env_key` is provided and set, that value is used directly.
+    If URI resolution fails (e.g., gated HF repo without auth), returns an empty string so training can proceed from scratch.
+    """
+    if env_key:
+        override_path = os.environ.get(env_key, "").strip()
+        if override_path:
+            log.info(f"Using checkpoint override from {env_key}: {override_path}")
+            return override_path
+
+    try:
+        return get_checkpoint_path(checkpoint_uri)
+    except Exception as exc:  # noqa: BLE001
+        log.warning(f"Failed to resolve checkpoint {checkpoint_uri}: {exc}. Falling back to empty load_path.")
+        return ""
+
+
 # *** Main checkpoint ***
 libero_all_4_suites_dataset = L(LIBERODataset)(
     data_dir=os.path.join(BASE_DATASETS_DIR, "LIBERO-Cosmos-Policy", "success_only"),  # Successful demos
@@ -86,6 +105,9 @@ cosmos_predict2_2b_480p_libero = LazyDict(
                     use_negative_prompt=False,
                     guidance=[0],
                     num_sampling_step=9,
+                ),
+                compile_tokenizer=dict(
+                    enabled=False,
                 ),
             ),
             run_validation=False,
@@ -146,7 +168,10 @@ cosmos_predict2_2b_480p_libero = LazyDict(
             context_parallel_size=1,
         ),
         checkpoint=dict(
-            load_path=get_checkpoint_path("hf://nvidia/Cosmos-Predict2-2B-Video2World/model-480p-16fps.pt"),
+            load_path=resolve_checkpoint_path_or_empty(
+                "hf://nvidia/Cosmos-Predict2-2B-Video2World/model-480p-16fps.pt",
+                env_key="COSMOS_BASE_MODEL_PATH",
+            ),
             load_training_state=False,  # This means do not load train state from the base checkpoint above (load_path); but when resuming this job, will load train state
             strict_resume=False,
             save_iter=1000,
@@ -402,8 +427,9 @@ cosmos_predict2_2b_480p_aloha_185_demos_4_tasks_mixture_foldshirt15_candiesinbow
         ],
         checkpoint=dict(
             # Resume from 50K checkpoint of base Cosmos Policy run
-            load_path=get_checkpoint_path(
-                "hf://nvidia/Cosmos-Policy-ALOHA-Predict2-2B/Cosmos-Policy-ALOHA-Predict2-2B.pt"
+            load_path=resolve_checkpoint_path_or_empty(
+                "hf://nvidia/Cosmos-Policy-ALOHA-Predict2-2B/Cosmos-Policy-ALOHA-Predict2-2B.pt",
+                env_key="COSMOS_POLICY_RESUME_PATH",
             ),
         ),
         scheduler=dict(
@@ -490,7 +516,7 @@ cosmos_predict2_2b_480p_vlabench_primitives = LazyDict(
             "_self_",
         ],
         checkpoint=dict(
-            save_iter=100,
+            save_iter=1000,
         ),
         model=L(CosmosPolicyVideo2WorldModel)(
             config=dict(
@@ -525,13 +551,13 @@ cosmos_predict2_2b_480p_vlabench_primitives = LazyDict(
                 shuffle=True,
                 seed=0,
             ),
-            batch_size=20,
+            batch_size=40,
             drop_last=True,
         ),
         job=dict(
-            local_root="/mnt/nas/jusang/cosmos-checkpoints3",
+            local_root="/NHNHOME/WORKSPACE/0426030040_A/cosmos-policy-vlabench-if",
             group="cosmos_v2_finetune",
-            name="cosmos_predict2_2b_480p_vlabench_primitives",
+            name="cosmos_predict2_2b_480p_vlabench_primitives_if",
         ),
     )
 )

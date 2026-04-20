@@ -208,8 +208,9 @@ class VLABenchDataset(Dataset):
             try:
                 with open(manifest_path, "rb") as file:
                     manifest = pickle.load(file)
-                if isinstance(manifest, list):
+                if isinstance(manifest, list) and self._is_valid_hdf5_file_manifest(manifest):
                     return manifest
+                print("Cached HDF5 file manifest is stale or invalid, rebuilding...")
             except Exception as exc:
                 print(f"Failed to load HDF5 file manifest: {exc}, rebuilding...")
 
@@ -222,6 +223,28 @@ class VLABenchDataset(Dataset):
             print(f"Failed to cache HDF5 file manifest: {exc}")
 
         return hdf5_files
+
+    def _is_valid_hdf5_file_manifest(self, manifest):
+        """Return True if cached file paths still exist under the current data_dir."""
+        if not manifest:
+            return False
+
+        data_dir_real = os.path.realpath(self.data_dir)
+        for file_path in manifest:
+            if not isinstance(file_path, str):
+                return False
+            if not os.path.exists(file_path):
+                return False
+
+            file_real = os.path.realpath(file_path)
+            try:
+                common_path = os.path.commonpath([data_dir_real, file_real])
+            except ValueError:
+                return False
+            if common_path != data_dir_real:
+                return False
+
+        return True
 
     def _build_episode_manifest(self, hdf5_files):
         """Build cached episode metadata for all files once."""
@@ -254,8 +277,9 @@ class VLABenchDataset(Dataset):
             try:
                 with open(manifest_path, "rb") as file:
                     manifest = pickle.load(file)
-                if isinstance(manifest, list):
+                if isinstance(manifest, list) and self._is_valid_episode_manifest(manifest, hdf5_files):
                     return manifest
+                print("Cached episode manifest is stale or invalid, rebuilding...")
             except Exception as exc:
                 print(f"Failed to load episode manifest: {exc}, rebuilding...")
 
@@ -268,6 +292,22 @@ class VLABenchDataset(Dataset):
             print(f"Failed to cache episode manifest: {exc}")
 
         return manifest
+
+    def _is_valid_episode_manifest(self, manifest, hdf5_files):
+        """Return True if cached episode manifest matches the currently selected HDF5 files."""
+        if not manifest:
+            return False
+
+        valid_hdf5_paths = set(hdf5_files)
+        for item in manifest:
+            if not isinstance(item, dict):
+                return False
+            if "hdf5_path" not in item or "timestamp_key" not in item or "num_steps" not in item:
+                return False
+            if item["hdf5_path"] not in valid_hdf5_paths:
+                return False
+
+        return True
 
     def _populate_episode_metadata(self, selected_hdf5_files):
         """Populate split-specific metadata from the cached all-file episode manifest."""

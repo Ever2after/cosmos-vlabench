@@ -36,6 +36,17 @@ from cosmos_policy._src.imaginaire.utils.context_managers import data_loader_ini
 from cosmos_policy._src.imaginaire.utils.launch import log_reproducible_setup
 
 
+def _set_default_compile_cache_dirs() -> None:
+    """Avoid Triton/Inductor loading .so files from /tmp on noexec-mounted systems."""
+    base_cache_dir = os.path.join(os.path.expanduser("~"), ".cache", "cosmos_policy")
+    inductor_cache_dir = os.path.join(base_cache_dir, "torchinductor")
+    triton_cache_dir = os.path.join(base_cache_dir, "triton")
+    os.makedirs(inductor_cache_dir, exist_ok=True)
+    os.makedirs(triton_cache_dir, exist_ok=True)
+    os.environ.setdefault("TORCHINDUCTOR_CACHE_DIR", inductor_cache_dir)
+    os.environ.setdefault("TRITON_CACHE_DIR", triton_cache_dir)
+
+
 @logging.catch(reraise=True)
 def launch(config: Config, args: argparse.Namespace) -> None:
     # Need to initialize the distributed environment before calling config.validate() because it tries to synchronize
@@ -137,6 +148,8 @@ For python-based LazyConfig, use "path.key=value".
         help="Do a dry run without training. Useful for debugging the config.",
     )
     args = parser.parse_args()
+
+    _set_default_compile_cache_dirs()
 
     config = load_config(args.config, args.opts, enable_one_logger=True)
 

@@ -25,7 +25,7 @@ from cosmos_policy._src.reason1.configs.default.model_config import FSDP2ModelCo
 class QwenVisionConfig:
     _attn_implementation_autoset: bool = True
     _name_or_path: str = ""
-    _attn_implementation: str = "flash_attention_2"
+    _attn_implementation: str = "sdpa"
 
     add_cross_attention: bool = False
     architectures: Optional[List[str]] = None
@@ -103,8 +103,7 @@ class QwenVisionConfig:
 
 @attrs.define
 class QwenModelConfig(FSDP2ModelConfig):
-    _attn_implementation: str = "flash_attention_2"  # Does not support cp
-    # _attn_implementation: str = "sdpa"
+    _attn_implementation: str = "sdpa"
     _attn_implementation_autoset: bool = True
     name_or_path: str = "Qwen/Qwen2.5-VL-3B-Instruct"
 
