@@ -344,6 +344,8 @@ class PolicyServer:
             image_keys = [
                 "primary_image",
                 "secondary_image",
+                "left_third_person_image",
+                "right_third_person_image",
                 "wrist_image",
                 "left_wrist_image",
                 "right_wrist_image",

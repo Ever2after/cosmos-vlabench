@@ -945,14 +945,26 @@ def get_action(
         #  - LIBERO: 1 wrist image, 1 primary (third-person) image
         #  - RoboCasa: 1 wrist image, 1 primary (third-person) image, 1 secondary (third-person) image
         #  - ALOHA: 2 wrist images, 1 primary (third-person) image
+        #  - VLABench: 1 wrist image, 1 primary image, 1 right third-person iamge, 1 left third-person image
         IMAGE_IDX, IMAGE2_IDX, WRIST_IMAGE_IDX, WRIST_IMAGE2_IDX = -1, -1, -1, -1
-        if cfg.suite in {"libero", "vlabench"}:
+        if cfg.suite == "libero":
             all_camera_images = [
                 obs["wrist_image"],
                 obs["primary_image"],
             ]
             WRIST_IMAGE_IDX = 0
             IMAGE_IDX = 1
+        elif cfg.suite == "vlabench":
+            all_camera_images = [
+                obs["wrist_image"],
+                obs["primary_image"],
+                obs["right_third_person_image"],
+                obs["left_third_person_image"],
+            ]
+            WRIST_IMAGE_IDX = 0
+            IMAGE_IDX = 1
+            IMAGE2_IDX = 2
+            WRIST_IMAGE2_IDX = 3
         elif cfg.suite == "robocasa":
             all_camera_images = [
                 obs["wrist_image"],
@@ -1190,13 +1202,20 @@ def get_action(
         # extract future state and value predictions from the generated sample now
         if generate_future_state_and_value_in_parallel:
             # Get indices in the generated sample to replace with the original (pre-injection) latent frames so that VAE decoding produces correct images
-            if cfg.suite in {"libero", "vlabench"}:
+            if cfg.suite == "libero":
                 INDICES_TO_REPLACE = [
                     0,
                     1,
                     4,
                     5,
                 ]  # 0: blank, 1: curr proprio, 2: curr wrist img, 3: curr primary img, 4: action, 5: future proprio, 6: future wrist img, 7: future primary img, 8: value
+            elif cfg.suite == "vlabench":
+                INDICES_TO_REPLACE = [
+                    0,
+                    1,
+                    6,
+                    7,
+                ]  # 0: blank, 1: curr proprio, 2: curr wrist img, 3: curr primary img, 4: curr right img, 5: curr left img, 6: action, 7: future proprio, 8: future wrist img, 9: future primary img, 10: future right img, 11: future left img, 12: value
             elif cfg.suite == "robocasa":
                 INDICES_TO_REPLACE = [
                     0,
@@ -1337,13 +1356,20 @@ def get_future_state_prediction(
 
     with torch.inference_mode():
         # Get indices in the generated sample to replace with the original (pre-injection) latent frames so that VAE decoding produces correct images
-        if cfg.suite in {"libero", "vlabench"}:
+        if cfg.suite == "libero":
             INDICES_TO_REPLACE = [
                 0,
                 1,
                 4,
                 5,
             ]  # 0: blank, 1: curr proprio, 2: curr wrist img, 3: curr primary img, 4: action, 5: future proprio, 6: future wrist img, 7: future primary img, 8: value
+        elif cfg.suite == "vlabench":
+            INDICES_TO_REPLACE = [
+                0,
+                1,
+                6,
+                7,
+            ]  # 0: blank, 1: curr proprio, 2: curr wrist img, 3: curr primary img, 4: curr secondary img, 5: curr right img, 6: action, 7: future proprio, 8: future wrist img, 9: future primary img, 10: future secondary img, 11: future right img, 12: value
         elif cfg.suite == "robocasa":
             INDICES_TO_REPLACE = [
                 0,
@@ -2262,6 +2288,10 @@ def query_model_parallel(
         observation_dict["right_wrist_image"] = observation["right_wrist_image"]
     if "secondary_image" in observation:
         observation_dict["secondary_image"] = observation["secondary_image"]
+    if "left_third_person_image" in observation:
+        observation_dict["left_third_person_image"] = observation["left_third_person_image"]
+    if "right_third_person_image" in observation:
+        observation_dict["right_third_person_image"] = observation["right_third_person_image"]
 
     try:
         # Submit tasks to worker pool

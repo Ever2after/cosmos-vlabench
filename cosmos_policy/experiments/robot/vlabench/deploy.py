@@ -9,8 +9,8 @@ from cosmos_policy.experiments.robot.aloha.deploy import deploy as base_deploy
 @dataclass
 class DeployConfig(BaseDeployConfig):
     suite: str = "vlabench"
-    num_wrist_images: int = 1
-    num_third_person_images: int = 1
+    num_wrist_images: int = 2
+    num_third_person_images: int = 2
     chunk_size: int = 8
     num_open_loop_steps: int = 8
 

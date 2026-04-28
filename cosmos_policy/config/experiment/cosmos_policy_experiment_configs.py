@@ -520,14 +520,14 @@ cosmos_predict2_2b_480p_vlabench_primitives = LazyDict(
         ),
         model=L(CosmosPolicyVideo2WorldModel)(
             config=dict(
-                state_t=9,  # Latent temporal dim (blank, proprio, wrist, primary, action, future proprio, future wrist, future primary, value)
-                min_num_conditional_frames=4,  # 1 blank, 3 conditioning (proprio, wrist, primary)
-                max_num_conditional_frames=4,  # 1 blank, 3 conditioning (proprio, wrist, primary)
+                state_t=13,  # Latent temporal dim (blank, proprio, wrist, primary, left, right, action, future proprio, future wrist, future primary, future left, future right, value)
+                min_num_conditional_frames=6,  # 1 blank, 5 conditioning (proprio, wrist, primary, left, right)
+                max_num_conditional_frames=6,  # 1 blank, 5 conditioning (proprio, wrist, primary, left, right)
                 sigma_conditional=0.0,  # No noise on conditional latents
                 conditioning_strategy="frame_replace",
                 denoise_replace_gt_frames=True,
                 tokenizer=dict(
-                    chunk_duration=33,  # 1 blank + 32 images (4 proprio, 4 wrist, 4 primary, 4 action, 4 future_proprio, 4 future_wrist, 4 future_primary, 4 value)
+                    chunk_duration=49,  # 1 blank + 48 images (4 proprio, 4 wrist, 4 primary, 4 left, 4 right, 4 action, 4 future_proprio, 4 future_wrist, 4 future_primary, 4 future_left, 4 future_right, 4 value)
                 ),
             ),
         ),
@@ -555,9 +555,9 @@ cosmos_predict2_2b_480p_vlabench_primitives = LazyDict(
             drop_last=True,
         ),
         job=dict(
-            local_root="/NHNHOME/WORKSPACE/0426030040_A/cosmos-policy-vlabench-if",
+            local_root="/NHNHOME/WORKSPACE/0426030040_A/cosmos-policy-vlabench-if-2",
             group="cosmos_v2_finetune",
-            name="cosmos_predict2_2b_480p_vlabench_primitives_if",
+            name="cosmos_predict2_2b_480p_vlabench_primitives_if_2",
         ),
     )
 )
@@ -565,7 +565,7 @@ cosmos_predict2_2b_480p_vlabench_primitives = LazyDict(
 cosmos_predict2_2b_480p_vlabench_primitives__inference_only = LazyDict(
     dict(
         defaults=[
-            "/experiment/cosmos_predict2_2b_480p_vlabench_primitives",
+            "/experiment/cosmos_predict2_2b_480p_vlabench_primitives_if",
             "_self_",
         ],
         model=L(CosmosPolicyVideo2WorldModel)(

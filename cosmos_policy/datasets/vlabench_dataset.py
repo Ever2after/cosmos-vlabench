@@ -5,22 +5,22 @@
 VLABench Dataset loader for Cosmos Policy training.
 
 HDF5 structure:
-  data/
-    {timestamp}/
-      instruction: (1,) bytes
-      observation/
-        rgb: (T, 4, 480, 480, 3) uint8  [camera_0, 1, 2(primary), 3(wrist)]
-        ee_state: (T, 8) float32  [proprio]
-        q_state: (T, 7) float32
-        depth, point_cloud_*: ignored
-      trajectory: (T, 8) float32  [actions]
-      meta_info/: task metadata
+    data/
+        {timestamp}/
+            instruction: (1,) bytes
+            observation/
+                rgb: (T, 4, 480, 480, 3) uint8  [camera_0(right), camera_1(left), camera_2(primary), camera_3(wrist)]
+                ee_state: (T, 8) float32  [proprio]
+                q_state: (T, 7) float32
+                depth, point_cloud_*: ignored
+            trajectory: (T, 8) float32  [actions]
+            meta_info/: task metadata
 
 Usage:
-    dataset = VLABenchDataset(
-        data_dir='/path/to/VLABench_release/primitive',
-        t5_text_embeddings_path='/path/t5_embeddings.pkl',
-    )
+        dataset = VLABenchDataset(
+                data_dir='/path/to/VLABench_release/primitive',
+                t5_text_embeddings_path='/path/t5_embeddings.pkl',
+        )
 """
 
 import os
@@ -46,9 +46,11 @@ class VLABenchDataset(Dataset):
     """
     VLABench dataset for visuomotor task learning.
     
-    Camera mapping:
-      - camera_2: primary (table view)
-      - camera_3: wrist (end-effector view)
+        Camera mapping:
+            - camera_0: right third-person
+            - camera_1: left third-person
+            - camera_2: primary (table view)
+            - camera_3: wrist (end-effector view)
     
     Proprioception: ee_state (8D)
     Actions: trajectory (8D)
@@ -395,6 +397,10 @@ class VLABenchDataset(Dataset):
         future_offset = index_lookup[future_frame_idx]
 
         return {
+            "current_right": rgb_frames[current_offset, 0],
+            "future_right": rgb_frames[future_offset, 0],
+            "current_left": rgb_frames[current_offset, 1],
+            "future_left": rgb_frames[future_offset, 1],
             "current_primary": rgb_frames[current_offset, 2],
             "future_primary": rgb_frames[future_offset, 2],
             "current_wrist": rgb_frames[current_offset, 3],
@@ -520,15 +526,19 @@ class VLABenchDataset(Dataset):
             )
 
         # Get frames
+        current_left = episode_data["current_left"]
+        current_right = episode_data["current_right"]
         current_wrist = episode_data["current_wrist"]
         current_primary = episode_data["current_primary"]
+        future_left = episode_data["future_left"]
+        future_right = episode_data["future_right"]
         future_wrist = episode_data["future_wrist"]
         future_primary = episode_data["future_primary"]
         current_proprio = episode_data["current_proprio"]
         future_proprio = episode_data["future_proprio"]
 
         # Build image sequence (matching LIBERO/ROBOCASA pattern)
-        # Structure: [blank, (proprio), wrist, primary, action, (future_proprio), future_wrist, future_primary, (value)]
+        # Structure: [blank, (proprio), wrist, primary, right, left, action, (future_proprio), future_wrist, future_primary, future_left, future_right, (value)]
         image_list = []
         current_sequence_idx = 0
 
@@ -562,8 +572,21 @@ class VLABenchDataset(Dataset):
             image_list.append(primary_dup)
             current_image_latent_idx = current_sequence_idx
             current_sequence_idx += 1
+
+            left_dup = duplicate_array(current_left, total_num_copies=self.num_duplicates_per_image)
+            image_list.append(left_dup)
+            current_image2_latent_idx = current_sequence_idx
+            current_sequence_idx += 1
+
+            # Reuse the model's second optional extra-image slot for the right-side camera.
+            right_dup = duplicate_array(current_right, total_num_copies=self.num_duplicates_per_image)
+            image_list.append(right_dup)
+            current_wrist_image2_latent_idx = current_sequence_idx
+            current_sequence_idx += 1
         else:
             current_image_latent_idx = -1
+            current_image2_latent_idx = -1
+            current_wrist_image2_latent_idx = -1
 
         # Action chunk (blank image as placeholder)
         action_blank = duplicate_array(np.zeros_like(current_primary), total_num_copies=self.num_duplicates_per_image)
@@ -596,8 +619,21 @@ class VLABenchDataset(Dataset):
             image_list.append(future_primary_dup)
             future_image_latent_idx = current_sequence_idx
             current_sequence_idx += 1
+
+            future_left_dup = duplicate_array(future_left, total_num_copies=self.num_duplicates_per_image)
+            image_list.append(future_left_dup)
+            future_image2_latent_idx = current_sequence_idx
+            current_sequence_idx += 1
+
+            # Reuse the model's second optional extra-image slot for the right-side camera.
+            future_right_dup = duplicate_array(future_right, total_num_copies=self.num_duplicates_per_image)
+            image_list.append(future_right_dup)
+            future_wrist_image2_latent_idx = current_sequence_idx
+            current_sequence_idx += 1
         else:
             future_image_latent_idx = -1
+            future_image2_latent_idx = -1
+            future_wrist_image2_latent_idx = -1
 
         # Always include the value slot in the video sequence when using the state_t=9 robot setup.
         value_blank = duplicate_array(np.zeros_like(current_primary), total_num_copies=self.num_duplicates_per_image)
@@ -672,9 +708,13 @@ class VLABenchDataset(Dataset):
             "current_proprio_latent_idx": current_proprio_latent_idx,
             "current_wrist_image_latent_idx": current_wrist_image_latent_idx,
             "current_image_latent_idx": current_image_latent_idx,
+            "current_image2_latent_idx": current_image2_latent_idx,
+            "current_wrist_image2_latent_idx": current_wrist_image2_latent_idx,
             "future_proprio_latent_idx": future_proprio_latent_idx,
             "future_wrist_image_latent_idx": future_wrist_image_latent_idx,
             "future_image_latent_idx": future_image_latent_idx,
+            "future_image2_latent_idx": future_image2_latent_idx,
+            "future_wrist_image2_latent_idx": future_wrist_image2_latent_idx,
         }
 
         return return_dict
